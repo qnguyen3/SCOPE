@@ -17,7 +17,11 @@ from features import FEATURES, compute_features_for_match, get_team_statistics, 
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/api/*": {
+    "origins": ["https://corner.qnguyen3.dev", "http://localhost:3000", "http://localhost:5173"],
+    "methods": ["GET", "POST", "OPTIONS"],
+    "allow_headers": ["Content-Type"]
+}})
 
 # Configuration
 DATA_URL = 'https://www.football-data.co.uk/mmz4281/2526/E0.csv'
