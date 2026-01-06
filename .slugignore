@@ -1,0 +1,11 @@
+# Ignore models - they'll be downloaded from external storage
+api/models/
+models/
+
+# Ignore unnecessary files
+*.md
+*.ipynb
+scripts/
+frontend/
+EXPERIMENTS.md
+GUIDE.md

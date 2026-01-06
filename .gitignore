@@ -1,0 +1,30 @@
+# Environment variables (contains API keys)
+.env
+api/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.uv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Ignore models - downloaded from HuggingFace at runtime
+api/models/
+models/
+*.pkl
+*.zip
+.vercel

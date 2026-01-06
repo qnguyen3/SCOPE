@@ -1,0 +1,3 @@
+# Only deploy index.html
+*.pkl
+*.zip

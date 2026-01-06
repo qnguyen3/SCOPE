@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EPL SCOPE | Corner Predictions</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- React -->
+    <script
+      crossorigin
+      src="https://unpkg.com/react@18/umd/react.development.js"
+    ></script>
+    <script
+      crossorigin
+      src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"
+    ></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              pitch: "#0D1F0D",
+              turf: "#1A3D1A",
+              grass: "#2ECC71",
+              floodlight: "#F4D03F",
+              stadium: "#0A0A0A",
+              steel: "#1C1C1C",
+              concrete: "#2D2D2D",
+            },
+            fontFamily: {
+              display: ["Bebas Neue", "sans-serif"],
+              body: ["Space Grotesk", "sans-serif"],
+              mono: ["JetBrains Mono", "monospace"],
+            },
+          },
+        },
+      };
+    </script>
+
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: #050505;
+        color: #e8e8e8;
+        font-family: "Space Grotesk", sans-serif;
+        min-height: 100vh;
+      }
+      .field-pattern {
+        background: repeating-linear-gradient(
+            90deg,
+            rgba(46, 204, 113, 0.03) 0px,
+            rgba(46, 204, 113, 0.03) 1px,
+            transparent 1px,
+            transparent 60px
+          ),
+          repeating-linear-gradient(
+            0deg,
+            rgba(46, 204, 113, 0.02) 0px,
+            rgba(46, 204, 113, 0.02) 1px,
+            transparent 1px,
+            transparent 60px
+          ),
+          linear-gradient(180deg, #050505 0%, #0a0f0a 100%);
+      }
+      .steel-texture {
+        background: linear-gradient(
+          135deg,
+          #1c1c1c 0%,
+          #252525 50%,
+          #1c1c1c 100%
+        );
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      .prob-bar {
+        height: 8px;
+        background: #1a1a1a;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .prob-bar-fill {
+        height: 100%;
+        border-radius: 4px;
+        transition: width 0.5s ease;
+      }
+      .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid #1a1a1a;
+        border-top-color: #2ecc71;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @keyframes edge-pulse {
+        0%,
+        100% {
+          box-shadow: 0 0 0 0 rgba(244, 208, 63, 0.4);
+        }
+        50% {
+          box-shadow: 0 0 20px 4px rgba(244, 208, 63, 0.2);
+        }
+      }
+      .edge-indicator {
+        animation: edge-pulse 2s ease-in-out infinite;
+      }
+      select {
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%232ECC71' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+        background-size: 16px;
+      }
+      .result-W {
+        background: #27ae60;
+      }
+      .result-D {
+        background: #7f8c8d;
+      }
+      .result-L {
+        background: #c0392b;
+      }
+    </style>
+  </head>
+  <body class="field-pattern">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const API_BASE =
+        window.location.hostname === "localhost"
+          ? "http://localhost:5001"
+          : "https://soccer-corners-production.up.railway.app";
+
+      const { useState, useEffect } = React;
+
+      // Header
+      const Header = () => (
+        <header className="py-8 px-6 border-b border-grass/20">
+          <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <div>
+              <h1 className="font-display text-5xl md:text-6xl tracking-wider text-white">
+                EPL <span className="text-grass">SCOPE</span>
+              </h1>
+              <p className="font-mono text-xs text-gray-500 tracking-widest mt-1">
+                CORNER PREDICTION ENGINE
+              </p>
+            </div>
+            <div className="hidden md:flex items-center gap-2 text-xs font-mono text-gray-600">
+              <div className="w-2 h-2 rounded-full bg-grass animate-pulse"></div>
+              <span>LIVE DATA</span>
+            </div>
+          </div>
+        </header>
+      );
+
+      // Team Selector
+      const TeamSelector = ({
+        teams,
+        homeTeam,
+        awayTeam,
+        setHomeTeam,
+        setAwayTeam,
+        onPredict,
+        loading,
+      }) => (
+        <div className="py-8 px-6">
+          <div className="max-w-4xl mx-auto steel-texture rounded-lg p-6 md:p-8">
+            <div className="grid grid-cols-1 md:grid-cols-7 gap-4 items-end">
+              <div className="md:col-span-3">
+                <label className="block font-mono text-xs text-gray-500 mb-2">
+                  HOME TEAM
+                </label>
+                <select
+                  value={homeTeam}
+                  onChange={(e) => setHomeTeam(e.target.value)}
+                  className="w-full bg-stadium border border-grass/30 rounded-lg px-4 py-3 text-white"
+                  disabled={loading}
+                >
+                  <option value="">Select team...</option>
+                  {teams.map((team) => (
+                    <option
+                      key={team}
+                      value={team}
+                      disabled={team === awayTeam}
+                    >
+                      {team}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-1 flex items-center justify-center py-2">
+                <span className="font-display text-3xl text-gray-600">VS</span>
+              </div>
+              <div className="md:col-span-3">
+                <label className="block font-mono text-xs text-gray-500 mb-2">
+                  AWAY TEAM
+                </label>
+                <select
+                  value={awayTeam}
+                  onChange={(e) => setAwayTeam(e.target.value)}
+                  className="w-full bg-stadium border border-grass/30 rounded-lg px-4 py-3 text-white"
+                  disabled={loading}
+                >
+                  <option value="">Select team...</option>
+                  {teams.map((team) => (
+                    <option
+                      key={team}
+                      value={team}
+                      disabled={team === homeTeam}
+                    >
+                      {team}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-center">
+              <button
+                onClick={onPredict}
+                disabled={!homeTeam || !awayTeam || loading}
+                className="px-12 py-4 bg-grass text-stadium font-display text-2xl tracking-wider rounded-lg disabled:opacity-50 hover:bg-grass/90 transition-all"
+              >
+                {loading ? "ANALYZING..." : "PREDICT"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+
+      // Loading
+      const Loading = () => (
+        <div className="flex flex-col items-center justify-center py-20">
+          <div className="spinner mb-4"></div>
+          <p className="font-mono text-sm text-gray-500">
+            Analyzing match data...
+          </p>
+        </div>
+      );
+
+      // Prediction Card
+      const PredictionCard = ({ threshold, data }) => {
+        const probOver = (data.prob_over || 0.5) * 100;
+        const probUnder = (data.prob_under || 0.5) * 100;
+        const rec = data.recommendation || "NO BET";
+        const isEdge = data.has_edge;
+
+        return (
+          <div
+            className={`steel-texture rounded-lg p-5 ${
+              isEdge ? "edge-indicator ring-1 ring-floodlight/50" : ""
+            }`}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="font-display text-3xl text-white">O/U</span>
+                <span className="font-display text-4xl text-grass">
+                  {threshold}
+                </span>
+              </div>
+              {isEdge && (
+                <div className="px-2 py-1 bg-floodlight/20 rounded text-floodlight text-xs font-mono">
+                  EDGE
+                </div>
+              )}
+            </div>
+            <div className="space-y-3 mb-4">
+              <div>
+                <div className="flex justify-between text-xs font-mono mb-1">
+                  <span className="text-gray-500">OVER</span>
+                  <span className="text-grass">{probOver.toFixed(1)}%</span>
+                </div>
+                <div className="prob-bar">
+                  <div
+                    className="prob-bar-fill bg-gradient-to-r from-green-600 to-green-500"
+                    style={{ width: `${probOver}%` }}
+                  ></div>
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs font-mono mb-1">
+                  <span className="text-gray-500">UNDER</span>
+                  <span className="text-red-400">{probUnder.toFixed(1)}%</span>
+                </div>
+                <div className="prob-bar">
+                  <div
+                    className="prob-bar-fill bg-gradient-to-r from-red-600 to-red-500"
+                    style={{ width: `${probUnder}%` }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+            <div
+              className={`text-center py-2 rounded font-display text-xl tracking-wider ${
+                rec === "OVER"
+                  ? "bg-grass/20 text-grass"
+                  : rec === "UNDER"
+                  ? "bg-red-500/20 text-red-400"
+                  : "bg-gray-800 text-gray-500"
+              }`}
+            >
+              {rec}
+            </div>
+          </div>
+        );
+      };
+
+      // Team Stats Card
+      const TeamStatsCard = ({ team, stats, venue }) => {
+        if (!stats) return null;
+        return (
+          <div className="steel-texture rounded-lg p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display text-2xl text-white">{team}</h3>
+              <span className="font-mono text-xs px-2 py-1 bg-grass/20 text-grass rounded">
+                {venue}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="text-center p-3 bg-stadium rounded">
+                <div className="font-display text-2xl text-grass">
+                  {stats.avg_corners_for?.toFixed(1) || "-"}
+                </div>
+                <div className="font-mono text-[10px] text-gray-500">FOR</div>
+              </div>
+              <div className="text-center p-3 bg-stadium rounded">
+                <div className="font-display text-2xl text-red-400">
+                  {stats.avg_corners_against?.toFixed(1) || "-"}
+                </div>
+                <div className="font-mono text-[10px] text-gray-500">
+                  AGAINST
+                </div>
+              </div>
+              <div className="text-center p-3 bg-stadium rounded">
+                <div className="font-display text-2xl text-white">
+                  {stats.avg_total_corners?.toFixed(1) || "-"}
+                </div>
+                <div className="font-mono text-[10px] text-gray-500">TOTAL</div>
+              </div>
+            </div>
+            {stats.recent_matches && (
+              <div>
+                <div className="font-mono text-xs text-gray-500 mb-2">
+                  RECENT FORM
+                </div>
+                <div className="flex gap-1">
+                  {stats.recent_matches.slice(-5).map((m, i) => (
+                    <div
+                      key={i}
+                      className={`w-8 h-8 rounded flex items-center justify-center font-display text-sm text-white result-${m.result}`}
+                      title={`${m.venue} vs ${m.opponent}: ${m.score}`}
+                    >
+                      {m.result}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      // H2H Card
+      const H2HCard = ({ data, homeTeam, awayTeam }) => {
+        if (!data?.matches?.length)
+          return (
+            <div className="steel-texture rounded-lg p-5">
+              <h3 className="font-display text-2xl text-white mb-4">
+                HEAD TO <span className="text-grass">HEAD</span>
+              </h3>
+              <p className="text-gray-500 font-mono text-sm">
+                No recent H2H data
+              </p>
+            </div>
+          );
+        return (
+          <div className="steel-texture rounded-lg p-5">
+            <h3 className="font-display text-2xl text-white mb-4">
+              HEAD TO <span className="text-grass">HEAD</span>
+            </h3>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="text-center p-3 bg-stadium rounded">
+                <div className="font-display text-2xl text-grass">
+                  {data.home_team_wins}
+                </div>
+                <div className="font-mono text-[10px] text-gray-500">
+                  {homeTeam}
+                </div>
+              </div>
+              <div className="text-center p-3 bg-stadium rounded">
+                <div className="font-display text-2xl text-gray-400">
+                  {data.draws}
+                </div>
+                <div className="font-mono text-[10px] text-gray-500">DRAWS</div>
+              </div>
+              <div className="text-center p-3 bg-stadium rounded">
+                <div className="font-display text-2xl text-red-400">
+                  {data.away_team_wins}
+                </div>
+                <div className="font-mono text-[10px] text-gray-500">
+                  {awayTeam}
+                </div>
+              </div>
+            </div>
+            <div className="text-center p-3 bg-grass/10 rounded">
+              <div className="font-mono text-xs text-gray-500 mb-1">
+                AVG TOTAL CORNERS
+              </div>
+              <div className="font-display text-3xl text-grass">
+                {data.avg_total_corners?.toFixed(1)}
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // LLM Assessment with Markdown
+      const LLMAssessment = ({ text }) => {
+        if (!text) return null;
+
+        const renderMarkdown = (md) => {
+          return md.split("\n").map((line, i) => {
+            // Headers
+            if (line.startsWith("### "))
+              return (
+                <h4
+                  key={i}
+                  className="font-display text-lg text-white mt-4 mb-2"
+                >
+                  {line.slice(4)}
+                </h4>
+              );
+            if (line.startsWith("## "))
+              return (
+                <h3
+                  key={i}
+                  className="font-display text-xl text-grass mt-5 mb-2"
+                >
+                  {line.slice(3)}
+                </h3>
+              );
+            if (line.startsWith("# "))
+              return (
+                <h2
+                  key={i}
+                  className="font-display text-2xl text-grass mt-6 mb-3"
+                >
+                  {line.slice(2)}
+                </h2>
+              );
+
+            // Bold text (inline)
+            if (line.includes("**")) {
+              const parts = line.split(/\*\*(.*?)\*\*/g);
+              return (
+                <p key={i} className="text-gray-300 my-1">
+                  {parts.map((part, j) =>
+                    j % 2 === 1 ? (
+                      <strong key={j} className="text-white">
+                        {part}
+                      </strong>
+                    ) : (
+                      part
+                    )
+                  )}
+                </p>
+              );
+            }
+
+            // Bullet points
+            if (line.startsWith("- "))
+              return (
+                <li key={i} className="text-gray-300 ml-4 my-1">
+                  {line.slice(2)}
+                </li>
+              );
+            if (line.startsWith("* "))
+              return (
+                <li key={i} className="text-gray-300 ml-4 my-1">
+                  {line.slice(2)}
+                </li>
+              );
+
+            // Numbered lists
+            if (/^\d+\.\s/.test(line))
+              return (
+                <li key={i} className="text-gray-300 ml-4 my-1 list-decimal">
+                  {line.replace(/^\d+\.\s/, "")}
+                </li>
+              );
+
+            // Empty line
+            if (line.trim() === "") return <div key={i} className="h-2"></div>;
+
+            // Regular paragraph
+            return (
+              <p key={i} className="text-gray-300 my-1">
+                {line}
+              </p>
+            );
+          });
+        };
+
+        return (
+          <div className="steel-texture rounded-lg p-6">
+            <h3 className="font-display text-2xl text-white mb-4">
+              AI <span className="text-grass">ANALYSIS</span>
+            </h3>
+            <div className="font-body text-sm leading-relaxed">
+              {renderMarkdown(text)}
+            </div>
+          </div>
+        );
+      };
+
+      // Main App
+      const App = () => {
+        const [teams, setTeams] = useState([]);
+        const [homeTeam, setHomeTeam] = useState("");
+        const [awayTeam, setAwayTeam] = useState("");
+        const [loading, setLoading] = useState(false);
+        const [teamsLoading, setTeamsLoading] = useState(true);
+        const [error, setError] = useState(null);
+        const [result, setResult] = useState(null);
+
+        useEffect(() => {
+          fetch(`${API_BASE}/api/teams`)
+            .then((res) => res.json())
+            .then((data) => setTeams(data.teams || []))
+            .catch(() => setError("Failed to load teams"))
+            .finally(() => setTeamsLoading(false));
+        }, []);
+
+        const handlePredict = async () => {
+          if (!homeTeam || !awayTeam) return;
+          setLoading(true);
+          setError(null);
+          try {
+            const res = await fetch(`${API_BASE}/api/predict`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                home_team: homeTeam,
+                away_team: awayTeam,
+              }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+            setResult(data);
+          } catch (err) {
+            setError(err.message);
+          } finally {
+            setLoading(false);
+          }
+        };
+
+        return (
+          <div className="min-h-screen pb-12">
+            <Header />
+
+            {teamsLoading ? (
+              <Loading />
+            ) : (
+              <TeamSelector
+                teams={teams}
+                homeTeam={homeTeam}
+                awayTeam={awayTeam}
+                setHomeTeam={setHomeTeam}
+                setAwayTeam={setAwayTeam}
+                onPredict={handlePredict}
+                loading={loading}
+              />
+            )}
+
+            {error && (
+              <div className="max-w-4xl mx-auto px-6 py-4">
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-red-400 font-mono text-sm">
+                  {error}
+                </div>
+              </div>
+            )}
+
+            {loading && <Loading />}
+
+            {result && !loading && (
+              <div className="max-w-7xl mx-auto px-6 space-y-8">
+                <div className="text-center py-4">
+                  <h2 className="font-display text-4xl md:text-5xl text-white">
+                    {result.match.home_team}{" "}
+                    <span className="text-grass">vs</span>{" "}
+                    {result.match.away_team}
+                  </h2>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  {["8.5", "9.5", "10.5", "11.5", "12.5"].map((t) => (
+                    <PredictionCard
+                      key={t}
+                      threshold={t}
+                      data={result.predictions?.[t] || {}}
+                    />
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <TeamStatsCard
+                    team={result.match.home_team}
+                    stats={result.statistics?.home_team}
+                    venue="HOME"
+                  />
+                  <TeamStatsCard
+                    team={result.match.away_team}
+                    stats={result.statistics?.away_team}
+                    venue="AWAY"
+                  />
+                </div>
+
+                <H2HCard
+                  data={result.statistics?.head_to_head}
+                  homeTeam={result.match.home_team}
+                  awayTeam={result.match.away_team}
+                />
+
+                <LLMAssessment text={result.llm_assessment} />
+              </div>
+            )}
+
+            <footer className="mt-16 py-8 border-t border-grass/10 text-center">
+              <p className="font-mono text-xs text-gray-600">EPL SCOPE, Inc.</p>
+            </footer>
+          </div>
+        );
+      };
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>

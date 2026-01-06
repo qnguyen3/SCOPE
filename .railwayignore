@@ -1,0 +1,14 @@
+# Ignore models - downloaded at runtime from HuggingFace
+api/models/*.pkl
+api/models/*.zip
+models/
+
+# Ignore unnecessary files
+*.md
+*.ipynb
+scripts/
+frontend/
+__pycache__/
+.venv/
+.uv/
+.git/
