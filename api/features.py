@@ -1,45 +1,54 @@
 """
-SCOPE - Feature Engineering Module
-Extracted from train_all_classifiers.py
+SCOPE - Feature Engineering Module V2
+New features: shot accuracy, corners per shot, yellow cards, goal difference
 """
 import pandas as pd
 import numpy as np
 
-# Feature list used by the models
+# Feature list used by the models (V2)
 FEATURES = [
-    'home_corners_for', 'home_corners_against', 'home_corners_total',
-    'away_corners_for', 'away_corners_against', 'away_corners_total',
-    'expected_corners', 'combined_corners_for', 'corner_diff',
-    'home_corner_std', 'away_corner_std', 'combined_volatility',
-    'home_shots', 'away_shots', 'combined_shots',
-    'home_sot', 'away_sot',
-    'home_goals', 'away_goals', 'combined_goals',
-    'home_corner_trend', 'away_corner_trend', 'combined_trend',
-    'home_over_9', 'away_over_9', 'combined_over_9',
-    'home_over_10', 'away_over_10', 'combined_over_10',
-    'home_over_11', 'away_over_11', 'combined_over_11',
+    'home_corners_avg', 'away_corners_avg',
+    'home_corners_conceded', 'away_corners_conceded',
+    'home_shots_avg', 'away_shots_avg',
+    'home_sot_avg', 'away_sot_avg',
+    'home_shot_accuracy', 'away_shot_accuracy',
+    'home_corners_per_shot', 'away_corners_per_shot',
+    'home_yellows_avg', 'away_yellows_avg',
+    'home_goal_diff', 'away_goal_diff',
+    'home_fouls_avg', 'away_fouls_avg',
+    'total_corners_expected', 'total_shots_expected',
+    'corner_efficiency_combined', 'aggression_combined', 'form_diff',
 ]
 
 
 def compute_features(df, n=5):
     """
-    Compute rolling window features for corner prediction.
+    Compute rolling window features for corner prediction (V2).
 
     Args:
-        df: DataFrame with columns Date, HomeTeam, AwayTeam, HC, AC, HS, AS, HST, AST, FTHG, FTAG, HF, AF
+        df: DataFrame with columns Date, HomeTeam, AwayTeam, HC, AC, HS, AS, HST, AST, FTHG, FTAG, HF, AF, HY, AY
         n: Rolling window size (number of previous home/away games)
 
     Returns:
         DataFrame with computed features
     """
     feature_cols = [
-        'home_corners_for', 'home_corners_against', 'home_corners_total', 'home_corner_std',
-        'away_corners_for', 'away_corners_against', 'away_corners_total', 'away_corner_std',
-        'home_shots', 'away_shots', 'home_sot', 'away_sot',
-        'home_goals', 'away_goals', 'home_fouls', 'away_fouls',
-        'home_over_9', 'home_over_10', 'home_over_11',
-        'away_over_9', 'away_over_10', 'away_over_11',
-        'home_corner_trend', 'away_corner_trend',
+        # Core corner stats
+        'home_corners_avg', 'away_corners_avg',
+        'home_corners_conceded', 'away_corners_conceded',
+        # Shot stats
+        'home_shots_avg', 'away_shots_avg',
+        'home_sot_avg', 'away_sot_avg',
+        # Shot efficiency (SOT/Shots)
+        'home_shot_accuracy', 'away_shot_accuracy',
+        # Corners per shot (corner generation efficiency)
+        'home_corners_per_shot', 'away_corners_per_shot',
+        # Yellow cards (aggression indicator)
+        'home_yellows_avg', 'away_yellows_avg',
+        # Goal difference (form indicator)
+        'home_goal_diff', 'away_goal_diff',
+        # Fouls
+        'home_fouls_avg', 'away_fouls_avg',
     ]
     for col in feature_cols:
         df[col] = np.nan
@@ -52,55 +61,65 @@ def compute_features(df, n=5):
         for i, idx in enumerate(home_idx):
             if i >= n:
                 prev = df.loc[home_idx[i-n:i]]
-                df.loc[idx, 'home_corners_for'] = prev['HC'].mean()
-                df.loc[idx, 'home_corners_against'] = prev['AC'].mean()
-                df.loc[idx, 'home_corners_total'] = (prev['HC'] + prev['AC']).mean()
-                df.loc[idx, 'home_corner_std'] = prev['HC'].std()
-                if 'HS' in df.columns: df.loc[idx, 'home_shots'] = prev['HS'].mean()
-                if 'HST' in df.columns: df.loc[idx, 'home_sot'] = prev['HST'].mean()
-                if 'FTHG' in df.columns: df.loc[idx, 'home_goals'] = prev['FTHG'].mean()
-                if 'HF' in df.columns: df.loc[idx, 'home_fouls'] = prev['HF'].mean()
-                total = prev['HC'] + prev['AC']
-                df.loc[idx, 'home_over_9'] = (total > 9.5).mean()
-                df.loc[idx, 'home_over_10'] = (total > 10.5).mean()
-                df.loc[idx, 'home_over_11'] = (total > 11.5).mean()
-                if i >= 3:
-                    df.loc[idx, 'home_corner_trend'] = df.loc[home_idx[i-3:i], 'HC'].mean() - df.loc[home_idx[i-n:i-3], 'HC'].mean()
+                df.loc[idx, 'home_corners_avg'] = prev['HC'].mean()
+                df.loc[idx, 'home_corners_conceded'] = prev['AC'].mean()
+                df.loc[idx, 'home_shots_avg'] = prev['HS'].mean()
+                df.loc[idx, 'home_sot_avg'] = prev['HST'].mean()
+
+                # Shot accuracy
+                shots = prev['HS'].sum()
+                if shots > 0:
+                    df.loc[idx, 'home_shot_accuracy'] = prev['HST'].sum() / shots
+                    df.loc[idx, 'home_corners_per_shot'] = prev['HC'].sum() / shots
+
+                # Yellow cards
+                if 'HY' in prev.columns:
+                    df.loc[idx, 'home_yellows_avg'] = prev['HY'].mean()
+
+                # Goal difference
+                df.loc[idx, 'home_goal_diff'] = (prev['FTHG'] - prev['FTAG']).mean()
+
+                # Fouls
+                if 'HF' in prev.columns:
+                    df.loc[idx, 'home_fouls_avg'] = prev['HF'].mean()
 
         for i, idx in enumerate(away_idx):
             if i >= n:
                 prev = df.loc[away_idx[i-n:i]]
-                df.loc[idx, 'away_corners_for'] = prev['AC'].mean()
-                df.loc[idx, 'away_corners_against'] = prev['HC'].mean()
-                df.loc[idx, 'away_corners_total'] = (prev['HC'] + prev['AC']).mean()
-                df.loc[idx, 'away_corner_std'] = prev['AC'].std()
-                if 'AS' in df.columns: df.loc[idx, 'away_shots'] = prev['AS'].mean()
-                if 'AST' in df.columns: df.loc[idx, 'away_sot'] = prev['AST'].mean()
-                if 'FTAG' in df.columns: df.loc[idx, 'away_goals'] = prev['FTAG'].mean()
-                if 'AF' in df.columns: df.loc[idx, 'away_fouls'] = prev['AF'].mean()
-                total = prev['HC'] + prev['AC']
-                df.loc[idx, 'away_over_9'] = (total > 9.5).mean()
-                df.loc[idx, 'away_over_10'] = (total > 10.5).mean()
-                df.loc[idx, 'away_over_11'] = (total > 11.5).mean()
-                if i >= 3:
-                    df.loc[idx, 'away_corner_trend'] = df.loc[away_idx[i-3:i], 'AC'].mean() - df.loc[away_idx[i-n:i-3], 'AC'].mean()
+                df.loc[idx, 'away_corners_avg'] = prev['AC'].mean()
+                df.loc[idx, 'away_corners_conceded'] = prev['HC'].mean()
+                df.loc[idx, 'away_shots_avg'] = prev['AS'].mean()
+                df.loc[idx, 'away_sot_avg'] = prev['AST'].mean()
 
-    df['expected_corners'] = (df['home_corners_total'] + df['away_corners_total']) / 2
-    df['combined_corners_for'] = df['home_corners_for'] + df['away_corners_for']
-    df['corner_diff'] = df['home_corners_for'] - df['away_corners_for']
-    df['combined_volatility'] = df['home_corner_std'] + df['away_corner_std']
-    df['combined_shots'] = df['home_shots'].fillna(0) + df['away_shots'].fillna(0)
-    df['combined_goals'] = df['home_goals'].fillna(0) + df['away_goals'].fillna(0)
-    df['combined_trend'] = df['home_corner_trend'].fillna(0) + df['away_corner_trend'].fillna(0)
-    df['combined_over_9'] = (df['home_over_9'].fillna(0.5) + df['away_over_9'].fillna(0.5)) / 2
-    df['combined_over_10'] = (df['home_over_10'].fillna(0.5) + df['away_over_10'].fillna(0.5)) / 2
-    df['combined_over_11'] = (df['home_over_11'].fillna(0.5) + df['away_over_11'].fillna(0.5)) / 2
+                # Shot accuracy
+                shots = prev['AS'].sum()
+                if shots > 0:
+                    df.loc[idx, 'away_shot_accuracy'] = prev['AST'].sum() / shots
+                    df.loc[idx, 'away_corners_per_shot'] = prev['AC'].sum() / shots
+
+                # Yellow cards
+                if 'AY' in prev.columns:
+                    df.loc[idx, 'away_yellows_avg'] = prev['AY'].mean()
+
+                # Goal difference
+                df.loc[idx, 'away_goal_diff'] = (prev['FTAG'] - prev['FTHG']).mean()
+
+                # Fouls
+                if 'AF' in prev.columns:
+                    df.loc[idx, 'away_fouls_avg'] = prev['AF'].mean()
+
+    # Combined features (non-redundant)
+    df['total_corners_expected'] = df['home_corners_avg'] + df['away_corners_avg']
+    df['total_shots_expected'] = df['home_shots_avg'] + df['away_shots_avg']
+    df['corner_efficiency_combined'] = df['home_corners_per_shot'].fillna(0) + df['away_corners_per_shot'].fillna(0)
+    df['aggression_combined'] = df['home_yellows_avg'].fillna(0) + df['away_yellows_avg'].fillna(0)
+    df['form_diff'] = df['home_goal_diff'].fillna(0) - df['away_goal_diff'].fillna(0)
     return df
 
 
 def compute_features_for_match(df, home_team, away_team, window=5):
     """
-    Compute features for a specific upcoming match.
+    Compute features for a specific upcoming match (V2).
 
     Args:
         df: Full DataFrame with historical data
@@ -119,76 +138,81 @@ def compute_features_for_match(df, home_team, away_team, window=5):
     features = {}
 
     if len(home_games) >= window:
-        features['home_corners_for'] = home_games['HC'].mean()
-        features['home_corners_against'] = home_games['AC'].mean()
-        features['home_corners_total'] = (home_games['HC'] + home_games['AC']).mean()
-        features['home_corner_std'] = home_games['HC'].std()
-        features['home_shots'] = home_games['HS'].mean() if 'HS' in df.columns else 0
-        features['home_sot'] = home_games['HST'].mean() if 'HST' in df.columns else 0
-        features['home_goals'] = home_games['FTHG'].mean() if 'FTHG' in df.columns else 0
-        total = home_games['HC'] + home_games['AC']
-        features['home_over_9'] = (total > 9.5).mean()
-        features['home_over_10'] = (total > 10.5).mean()
-        features['home_over_11'] = (total > 11.5).mean()
-        if len(home_games) >= 3:
-            features['home_corner_trend'] = home_games.tail(3)['HC'].mean() - home_games.head(window-3)['HC'].mean()
+        features['home_corners_avg'] = home_games['HC'].mean()
+        features['home_corners_conceded'] = home_games['AC'].mean()
+        features['home_shots_avg'] = home_games['HS'].mean() if 'HS' in df.columns else 12.0
+        features['home_sot_avg'] = home_games['HST'].mean() if 'HST' in df.columns else 4.0
+
+        # Shot accuracy
+        shots = home_games['HS'].sum() if 'HS' in df.columns else 0
+        if shots > 0:
+            features['home_shot_accuracy'] = home_games['HST'].sum() / shots
+            features['home_corners_per_shot'] = home_games['HC'].sum() / shots
         else:
-            features['home_corner_trend'] = 0
+            features['home_shot_accuracy'] = 0.33
+            features['home_corners_per_shot'] = 0.4
+
+        # Yellow cards
+        features['home_yellows_avg'] = home_games['HY'].mean() if 'HY' in df.columns else 1.5
+
+        # Goal difference
+        features['home_goal_diff'] = (home_games['FTHG'] - home_games['FTAG']).mean() if 'FTHG' in df.columns else 0
+
+        # Fouls
+        features['home_fouls_avg'] = home_games['HF'].mean() if 'HF' in df.columns else 10.0
     else:
         # Default values if not enough data
-        features['home_corners_for'] = 5.0
-        features['home_corners_against'] = 5.0
-        features['home_corners_total'] = 10.0
-        features['home_corner_std'] = 1.5
-        features['home_shots'] = 12.0
-        features['home_sot'] = 4.0
-        features['home_goals'] = 1.5
-        features['home_over_9'] = 0.5
-        features['home_over_10'] = 0.4
-        features['home_over_11'] = 0.3
-        features['home_corner_trend'] = 0
+        features['home_corners_avg'] = 5.0
+        features['home_corners_conceded'] = 5.0
+        features['home_shots_avg'] = 12.0
+        features['home_sot_avg'] = 4.0
+        features['home_shot_accuracy'] = 0.33
+        features['home_corners_per_shot'] = 0.4
+        features['home_yellows_avg'] = 1.5
+        features['home_goal_diff'] = 0
+        features['home_fouls_avg'] = 10.0
 
     if len(away_games) >= window:
-        features['away_corners_for'] = away_games['AC'].mean()
-        features['away_corners_against'] = away_games['HC'].mean()
-        features['away_corners_total'] = (away_games['HC'] + away_games['AC']).mean()
-        features['away_corner_std'] = away_games['AC'].std()
-        features['away_shots'] = away_games['AS'].mean() if 'AS' in df.columns else 0
-        features['away_sot'] = away_games['AST'].mean() if 'AST' in df.columns else 0
-        features['away_goals'] = away_games['FTAG'].mean() if 'FTAG' in df.columns else 0
-        total = away_games['HC'] + away_games['AC']
-        features['away_over_9'] = (total > 9.5).mean()
-        features['away_over_10'] = (total > 10.5).mean()
-        features['away_over_11'] = (total > 11.5).mean()
-        if len(away_games) >= 3:
-            features['away_corner_trend'] = away_games.tail(3)['AC'].mean() - away_games.head(window-3)['AC'].mean()
+        features['away_corners_avg'] = away_games['AC'].mean()
+        features['away_corners_conceded'] = away_games['HC'].mean()
+        features['away_shots_avg'] = away_games['AS'].mean() if 'AS' in df.columns else 10.0
+        features['away_sot_avg'] = away_games['AST'].mean() if 'AST' in df.columns else 3.0
+
+        # Shot accuracy
+        shots = away_games['AS'].sum() if 'AS' in df.columns else 0
+        if shots > 0:
+            features['away_shot_accuracy'] = away_games['AST'].sum() / shots
+            features['away_corners_per_shot'] = away_games['AC'].sum() / shots
         else:
-            features['away_corner_trend'] = 0
+            features['away_shot_accuracy'] = 0.30
+            features['away_corners_per_shot'] = 0.35
+
+        # Yellow cards
+        features['away_yellows_avg'] = away_games['AY'].mean() if 'AY' in df.columns else 1.8
+
+        # Goal difference
+        features['away_goal_diff'] = (away_games['FTAG'] - away_games['FTHG']).mean() if 'FTAG' in df.columns else 0
+
+        # Fouls
+        features['away_fouls_avg'] = away_games['AF'].mean() if 'AF' in df.columns else 11.0
     else:
         # Default values if not enough data
-        features['away_corners_for'] = 4.0
-        features['away_corners_against'] = 5.0
-        features['away_corners_total'] = 10.0
-        features['away_corner_std'] = 1.5
-        features['away_shots'] = 10.0
-        features['away_sot'] = 3.0
-        features['away_goals'] = 1.2
-        features['away_over_9'] = 0.5
-        features['away_over_10'] = 0.4
-        features['away_over_11'] = 0.3
-        features['away_corner_trend'] = 0
+        features['away_corners_avg'] = 4.0
+        features['away_corners_conceded'] = 5.0
+        features['away_shots_avg'] = 10.0
+        features['away_sot_avg'] = 3.0
+        features['away_shot_accuracy'] = 0.30
+        features['away_corners_per_shot'] = 0.35
+        features['away_yellows_avg'] = 1.8
+        features['away_goal_diff'] = 0
+        features['away_fouls_avg'] = 11.0
 
     # Combined features
-    features['expected_corners'] = (features['home_corners_total'] + features['away_corners_total']) / 2
-    features['combined_corners_for'] = features['home_corners_for'] + features['away_corners_for']
-    features['corner_diff'] = features['home_corners_for'] - features['away_corners_for']
-    features['combined_volatility'] = features['home_corner_std'] + features['away_corner_std']
-    features['combined_shots'] = features['home_shots'] + features['away_shots']
-    features['combined_goals'] = features['home_goals'] + features['away_goals']
-    features['combined_trend'] = features['home_corner_trend'] + features['away_corner_trend']
-    features['combined_over_9'] = (features['home_over_9'] + features['away_over_9']) / 2
-    features['combined_over_10'] = (features['home_over_10'] + features['away_over_10']) / 2
-    features['combined_over_11'] = (features['home_over_11'] + features['away_over_11']) / 2
+    features['total_corners_expected'] = features['home_corners_avg'] + features['away_corners_avg']
+    features['total_shots_expected'] = features['home_shots_avg'] + features['away_shots_avg']
+    features['corner_efficiency_combined'] = features['home_corners_per_shot'] + features['away_corners_per_shot']
+    features['aggression_combined'] = features['home_yellows_avg'] + features['away_yellows_avg']
+    features['form_diff'] = features['home_goal_diff'] - features['away_goal_diff']
 
     return features
 

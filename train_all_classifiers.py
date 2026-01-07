@@ -1,9 +1,6 @@
 """
 SCOPE - Train Production Classifiers
-Best params from fine-tuning iterations
-
-O/U 9.5: Window=5, Iter 1 params (deeper, more regularized)
-O/U 10.5: Window=10, Iter 2 params (less regularization)
+LightGBM with SMOTE resampling for class balance
 """
 
 import pandas as pd
@@ -11,11 +8,9 @@ import numpy as np
 import pickle
 import os
 from datetime import datetime
-from sklearn.metrics import accuracy_score, roc_auc_score
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix
+from imblearn.over_sampling import SMOTE
 import lightgbm as lgb
-import xgboost as xgb
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -26,72 +21,26 @@ TEST_SEASON = '2025-26'
 ODDS_DECIMAL = 1.91
 MODEL_DIR = 'models/classifier'
 
-# Best configurations - tuned params applied to all thresholds
-# Lower thresholds (8.5, 9.5): Window=5, more regularization
-# Higher thresholds (10.5, 11.5, 12.5): Window=10, less regularization
-
-PARAMS_LOW = {
-    'lgbm': {
-        'n_estimators': 700,
-        'max_depth': 8,
-        'learning_rate': 0.02,
-        'num_leaves': 63,
-        'min_child_samples': 20,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'reg_alpha': 0.05,
-        'reg_lambda': 0.05,
-    },
-    'xgb': {
-        'n_estimators': 700,
-        'max_depth': 6,
-        'learning_rate': 0.02,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'reg_alpha': 0.05,
-        'reg_lambda': 0.05,
-    },
-    'rf': {
-        'n_estimators': 300,
-        'max_depth': 10,
-        'min_samples_leaf': 15,
-    },
+# LightGBM params
+LGBM_PARAMS = {
+    'n_estimators': 500,
+    'max_depth': 6,
+    'learning_rate': 0.03,
+    'num_leaves': 31,
+    'min_child_samples': 20,
+    'subsample': 0.8,
+    'colsample_bytree': 0.8,
+    'reg_alpha': 0.1,
+    'reg_lambda': 0.1,
 }
 
-PARAMS_HIGH = {
-    'lgbm': {
-        'n_estimators': 700,
-        'max_depth': 8,
-        'learning_rate': 0.02,
-        'num_leaves': 63,
-        'min_child_samples': 20,
-        'subsample': 0.85,
-        'colsample_bytree': 0.85,
-        'reg_alpha': 0.01,
-        'reg_lambda': 0.01,
-    },
-    'xgb': {
-        'n_estimators': 700,
-        'max_depth': 6,
-        'learning_rate': 0.02,
-        'subsample': 0.85,
-        'colsample_bytree': 0.85,
-        'reg_alpha': 0.01,
-        'reg_lambda': 0.01,
-    },
-    'rf': {
-        'n_estimators': 300,
-        'max_depth': 10,
-        'min_samples_leaf': 10,
-    },
-}
-
+# Optimized confidence thresholds based on probability distribution analysis
 CONFIGS = [
-    {'threshold': 8.5, 'window': 5, 'confidence': 0.58, **PARAMS_LOW},
-    {'threshold': 9.5, 'window': 5, 'confidence': 0.58, **PARAMS_LOW},
-    {'threshold': 10.5, 'window': 10, 'confidence': 0.54, **PARAMS_HIGH},
-    {'threshold': 11.5, 'window': 10, 'confidence': 0.54, **PARAMS_HIGH},
-    {'threshold': 12.5, 'window': 10, 'confidence': 0.54, **PARAMS_HIGH},
+    {'threshold': 8.5, 'window': 5, 'confidence': 0.70},
+    {'threshold': 9.5, 'window': 5, 'confidence': 0.60},
+    {'threshold': 10.5, 'window': 5, 'confidence': 0.65},
+    {'threshold': 11.5, 'window': 5, 'confidence': 0.70},
+    {'threshold': 12.5, 'window': 5, 'confidence': 0.70},
 ]
 
 print("="*70)
@@ -111,7 +60,7 @@ SEASONS = {
 }
 
 BASE_URL = 'https://www.football-data.co.uk/mmz4281/{code}/E0.csv'
-COLS = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'HS', 'AS', 'HST', 'AST', 'HC', 'AC', 'HF', 'AF']
+COLS = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'HS', 'AS', 'HST', 'AST', 'HC', 'AC', 'HF', 'AF', 'HY', 'AY']
 
 print("\nLoading data (2010-2026)...")
 dfs = []
@@ -134,17 +83,27 @@ df['TotalCorners'] = df['HC'] + df['AC']
 print(f"\nTotal: {len(df)} matches")
 
 # =============================================================================
-# FEATURE ENGINEERING
+# FEATURE ENGINEERING V2
+# New features: shot accuracy, corners per shot, yellow cards, goal difference
 # =============================================================================
 def compute_features(df, n=5):
     feature_cols = [
-        'home_corners_for', 'home_corners_against', 'home_corners_total', 'home_corner_std',
-        'away_corners_for', 'away_corners_against', 'away_corners_total', 'away_corner_std',
-        'home_shots', 'away_shots', 'home_sot', 'away_sot',
-        'home_goals', 'away_goals', 'home_fouls', 'away_fouls',
-        'home_over_9', 'home_over_10', 'home_over_11',
-        'away_over_9', 'away_over_10', 'away_over_11',
-        'home_corner_trend', 'away_corner_trend',
+        # Core corner stats
+        'home_corners_avg', 'away_corners_avg',
+        'home_corners_conceded', 'away_corners_conceded',
+        # Shot stats
+        'home_shots_avg', 'away_shots_avg',
+        'home_sot_avg', 'away_sot_avg',
+        # Shot efficiency (SOT/Shots)
+        'home_shot_accuracy', 'away_shot_accuracy',
+        # Corners per shot (corner generation efficiency)
+        'home_corners_per_shot', 'away_corners_per_shot',
+        # Yellow cards (aggression indicator)
+        'home_yellows_avg', 'away_yellows_avg',
+        # Goal difference (form indicator)
+        'home_goal_diff', 'away_goal_diff',
+        # Fouls
+        'home_fouls_avg', 'away_fouls_avg',
     ]
     for col in feature_cols:
         df[col] = np.nan
@@ -157,63 +116,73 @@ def compute_features(df, n=5):
         for i, idx in enumerate(home_idx):
             if i >= n:
                 prev = df.loc[home_idx[i-n:i]]
-                df.loc[idx, 'home_corners_for'] = prev['HC'].mean()
-                df.loc[idx, 'home_corners_against'] = prev['AC'].mean()
-                df.loc[idx, 'home_corners_total'] = (prev['HC'] + prev['AC']).mean()
-                df.loc[idx, 'home_corner_std'] = prev['HC'].std()
-                if 'HS' in df.columns: df.loc[idx, 'home_shots'] = prev['HS'].mean()
-                if 'HST' in df.columns: df.loc[idx, 'home_sot'] = prev['HST'].mean()
-                if 'FTHG' in df.columns: df.loc[idx, 'home_goals'] = prev['FTHG'].mean()
-                if 'HF' in df.columns: df.loc[idx, 'home_fouls'] = prev['HF'].mean()
-                total = prev['HC'] + prev['AC']
-                df.loc[idx, 'home_over_9'] = (total > 9.5).mean()
-                df.loc[idx, 'home_over_10'] = (total > 10.5).mean()
-                df.loc[idx, 'home_over_11'] = (total > 11.5).mean()
-                if i >= 3:
-                    df.loc[idx, 'home_corner_trend'] = df.loc[home_idx[i-3:i], 'HC'].mean() - df.loc[home_idx[i-n:i-3], 'HC'].mean()
+                df.loc[idx, 'home_corners_avg'] = prev['HC'].mean()
+                df.loc[idx, 'home_corners_conceded'] = prev['AC'].mean()
+                df.loc[idx, 'home_shots_avg'] = prev['HS'].mean()
+                df.loc[idx, 'home_sot_avg'] = prev['HST'].mean()
+
+                # Shot accuracy
+                shots = prev['HS'].sum()
+                if shots > 0:
+                    df.loc[idx, 'home_shot_accuracy'] = prev['HST'].sum() / shots
+                    df.loc[idx, 'home_corners_per_shot'] = prev['HC'].sum() / shots
+
+                # Yellow cards
+                if 'HY' in prev.columns:
+                    df.loc[idx, 'home_yellows_avg'] = prev['HY'].mean()
+
+                # Goal difference
+                df.loc[idx, 'home_goal_diff'] = (prev['FTHG'] - prev['FTAG']).mean()
+
+                # Fouls
+                if 'HF' in prev.columns:
+                    df.loc[idx, 'home_fouls_avg'] = prev['HF'].mean()
 
         for i, idx in enumerate(away_idx):
             if i >= n:
                 prev = df.loc[away_idx[i-n:i]]
-                df.loc[idx, 'away_corners_for'] = prev['AC'].mean()
-                df.loc[idx, 'away_corners_against'] = prev['HC'].mean()
-                df.loc[idx, 'away_corners_total'] = (prev['HC'] + prev['AC']).mean()
-                df.loc[idx, 'away_corner_std'] = prev['AC'].std()
-                if 'AS' in df.columns: df.loc[idx, 'away_shots'] = prev['AS'].mean()
-                if 'AST' in df.columns: df.loc[idx, 'away_sot'] = prev['AST'].mean()
-                if 'FTAG' in df.columns: df.loc[idx, 'away_goals'] = prev['FTAG'].mean()
-                if 'AF' in df.columns: df.loc[idx, 'away_fouls'] = prev['AF'].mean()
-                total = prev['HC'] + prev['AC']
-                df.loc[idx, 'away_over_9'] = (total > 9.5).mean()
-                df.loc[idx, 'away_over_10'] = (total > 10.5).mean()
-                df.loc[idx, 'away_over_11'] = (total > 11.5).mean()
-                if i >= 3:
-                    df.loc[idx, 'away_corner_trend'] = df.loc[away_idx[i-3:i], 'AC'].mean() - df.loc[away_idx[i-n:i-3], 'AC'].mean()
+                df.loc[idx, 'away_corners_avg'] = prev['AC'].mean()
+                df.loc[idx, 'away_corners_conceded'] = prev['HC'].mean()
+                df.loc[idx, 'away_shots_avg'] = prev['AS'].mean()
+                df.loc[idx, 'away_sot_avg'] = prev['AST'].mean()
 
-    df['expected_corners'] = (df['home_corners_total'] + df['away_corners_total']) / 2
-    df['combined_corners_for'] = df['home_corners_for'] + df['away_corners_for']
-    df['corner_diff'] = df['home_corners_for'] - df['away_corners_for']
-    df['combined_volatility'] = df['home_corner_std'] + df['away_corner_std']
-    df['combined_shots'] = df['home_shots'].fillna(0) + df['away_shots'].fillna(0)
-    df['combined_goals'] = df['home_goals'].fillna(0) + df['away_goals'].fillna(0)
-    df['combined_trend'] = df['home_corner_trend'].fillna(0) + df['away_corner_trend'].fillna(0)
-    df['combined_over_9'] = (df['home_over_9'].fillna(0.5) + df['away_over_9'].fillna(0.5)) / 2
-    df['combined_over_10'] = (df['home_over_10'].fillna(0.5) + df['away_over_10'].fillna(0.5)) / 2
-    df['combined_over_11'] = (df['home_over_11'].fillna(0.5) + df['away_over_11'].fillna(0.5)) / 2
+                # Shot accuracy
+                shots = prev['AS'].sum()
+                if shots > 0:
+                    df.loc[idx, 'away_shot_accuracy'] = prev['AST'].sum() / shots
+                    df.loc[idx, 'away_corners_per_shot'] = prev['AC'].sum() / shots
+
+                # Yellow cards
+                if 'AY' in prev.columns:
+                    df.loc[idx, 'away_yellows_avg'] = prev['AY'].mean()
+
+                # Goal difference
+                df.loc[idx, 'away_goal_diff'] = (prev['FTAG'] - prev['FTHG']).mean()
+
+                # Fouls
+                if 'AF' in prev.columns:
+                    df.loc[idx, 'away_fouls_avg'] = prev['AF'].mean()
+
+    # Combined features (non-redundant)
+    df['total_corners_expected'] = df['home_corners_avg'] + df['away_corners_avg']
+    df['total_shots_expected'] = df['home_shots_avg'] + df['away_shots_avg']
+    df['corner_efficiency_combined'] = df['home_corners_per_shot'].fillna(0) + df['away_corners_per_shot'].fillna(0)
+    df['aggression_combined'] = df['home_yellows_avg'].fillna(0) + df['away_yellows_avg'].fillna(0)
+    df['form_diff'] = df['home_goal_diff'].fillna(0) - df['away_goal_diff'].fillna(0)
     return df
 
 FEATURES = [
-    'home_corners_for', 'home_corners_against', 'home_corners_total',
-    'away_corners_for', 'away_corners_against', 'away_corners_total',
-    'expected_corners', 'combined_corners_for', 'corner_diff',
-    'home_corner_std', 'away_corner_std', 'combined_volatility',
-    'home_shots', 'away_shots', 'combined_shots',
-    'home_sot', 'away_sot',
-    'home_goals', 'away_goals', 'combined_goals',
-    'home_corner_trend', 'away_corner_trend', 'combined_trend',
-    'home_over_9', 'away_over_9', 'combined_over_9',
-    'home_over_10', 'away_over_10', 'combined_over_10',
-    'home_over_11', 'away_over_11', 'combined_over_11',
+    'home_corners_avg', 'away_corners_avg',
+    'home_corners_conceded', 'away_corners_conceded',
+    'home_shots_avg', 'away_shots_avg',
+    'home_sot_avg', 'away_sot_avg',
+    'home_shot_accuracy', 'away_shot_accuracy',
+    'home_corners_per_shot', 'away_corners_per_shot',
+    'home_yellows_avg', 'away_yellows_avg',
+    'home_goal_diff', 'away_goal_diff',
+    'home_fouls_avg', 'away_fouls_avg',
+    'total_corners_expected', 'total_shots_expected',
+    'corner_efficiency_combined', 'aggression_combined', 'form_diff',
 ]
 
 # =============================================================================
@@ -254,20 +223,22 @@ for config in CONFIGS:
     print(f"Training: {len(train)} | Test: {len(test)}")
     print(f"Naive accuracy: {naive*100:.1f}%")
 
-    # Build models with config-specific params
-    lgbm = lgb.LGBMClassifier(**config['lgbm'], verbose=-1, random_state=42, class_weight='balanced')
-    xgbm = xgb.XGBClassifier(**config['xgb'], verbosity=0, random_state=42)
-    rf = RandomForestClassifier(**config['rf'], random_state=42, n_jobs=-1, class_weight='balanced')
+    # Class balance before SMOTE
+    pos_rate = (y_train == 1).mean()
+    print(f"Class balance before SMOTE: {pos_rate*100:.1f}% positive / {(1-pos_rate)*100:.1f}% negative")
 
-    ensemble = VotingClassifier([('lgbm', lgbm), ('xgb', xgbm), ('rf', rf)], voting='soft')
-    print("Training ensemble...")
-    ensemble.fit(X_train, y_train)
+    # Apply SMOTE to balance classes
+    smote = SMOTE(random_state=42)
+    X_train_bal, y_train_bal = smote.fit_resample(X_train, y_train)
+    print(f"After SMOTE: {len(X_train_bal)} samples ({(y_train_bal == 1).mean()*100:.1f}% positive)")
 
-    calibrated = CalibratedClassifierCV(ensemble, method='isotonic', cv=5)
-    calibrated.fit(X_train, y_train)
+    # Train LightGBM (no class_weight needed after SMOTE)
+    model = lgb.LGBMClassifier(**LGBM_PARAMS, verbose=-1, random_state=42)
+    print("Training LightGBM...")
+    model.fit(X_train_bal, y_train_bal)
 
     # Evaluate
-    probs = calibrated.predict_proba(X_test)[:, 1]
+    probs = model.predict_proba(X_test)[:, 1]
     preds = (probs > 0.5).astype(int)
 
     print(f"\nResults at Conf > {conf}:")
@@ -276,6 +247,7 @@ for config in CONFIGS:
     bets = over.sum() + under.sum()
     wins = ((over) & (y_test == 1)).sum() + ((under) & (y_test == 0)).sum()
 
+    wr, roi, edge = 0, 0, 0  # defaults
     if bets > 0:
         wr = wins / bets * 100
         roi = (wins * (ODDS_DECIMAL - 1) - (bets - wins)) / bets * 100
@@ -285,19 +257,50 @@ for config in CONFIGS:
         print(f"  Real Edge: {edge:+.1f}%")
         print(f"  ROI: {roi:+.1f}%")
 
+    # Probability distribution analysis
+    print(f"\n--- Probability Distribution ---")
+    print(f"  Min: {probs.min():.3f} | Max: {probs.max():.3f} | Mean: {probs.mean():.3f} | Std: {probs.std():.3f}")
+    print(f"  P < 0.3 (confident Under): {(probs < 0.3).sum()} ({(probs < 0.3).mean()*100:.1f}%)")
+    print(f"  P 0.3-0.7 (uncertain): {((probs >= 0.3) & (probs <= 0.7)).sum()} ({((probs >= 0.3) & (probs <= 0.7)).mean()*100:.1f}%)")
+    print(f"  P > 0.7 (confident Over): {(probs > 0.7).sum()} ({(probs > 0.7).mean()*100:.1f}%)")
+
+    # Confusion Matrix Analysis
+    print(f"\n--- Confusion Matrix Analysis ---")
+    cm = confusion_matrix(y_test, preds)
+    tn, fp, fn, tp = cm.ravel()
+    total_test = len(y_test)
+    actual_over = (y_test == 1).sum()
+    actual_under = (y_test == 0).sum()
+    pred_over = (preds == 1).sum()
+    pred_under = (preds == 0).sum()
+
+    print(f"  Actual:    Over={actual_over} ({actual_over/total_test*100:.1f}%) | Under={actual_under} ({actual_under/total_test*100:.1f}%)")
+    print(f"  Predicted: Over={pred_over} ({pred_over/total_test*100:.1f}%) | Under={pred_under} ({pred_under/total_test*100:.1f}%)")
+    print(f"  Confusion Matrix:")
+    print(f"                 Pred Under   Pred Over")
+    print(f"    Actual Under    {tn:4d}        {fp:4d}")
+    print(f"    Actual Over     {fn:4d}        {tp:4d}")
+
+    # Check if model is just following base rate
+    base_rate_over = actual_over / total_test
+    pred_rate_over = pred_over / total_test
+    base_rate_diff = abs(pred_rate_over - base_rate_over) * 100
+
+    if pred_over == 0 or pred_under == 0:
+        print(f"  ⚠️  WARNING: Model predicting ALL {'Under' if pred_over == 0 else 'Over'}!")
+    elif base_rate_diff < 5:
+        print(f"  ⚠️  Model prediction rate similar to base rate (diff={base_rate_diff:.1f}%)")
+    else:
+        print(f"  ✅ Model deviating from base rate by {base_rate_diff:.1f}%")
+
     # Save model
     model_data = {
-        'model': calibrated,
-        'ensemble': ensemble,
+        'model': model,
         'features': valid_feat,
         'threshold': threshold,
         'window': window,
         'confidence': conf,
-        'params': {
-            'lgbm': config['lgbm'],
-            'xgb': config['xgb'],
-            'rf': config['rf'],
-        },
+        'params': LGBM_PARAMS,
         'metrics': {
             'bets': bets,
             'win_rate': wr,

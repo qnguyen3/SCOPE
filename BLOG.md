@@ -4,18 +4,6 @@
 
 ---
 
-## Mở đầu: 2 giờ sáng và một ý tưởng điên rồ
-
-Tôi không phải dân cá độ. Thực ra, tôi ghét cá độ. Nhưng có một thứ tôi thích hơn cả việc ghét cá độ: **chứng minh rằng mình có thể đánh bại một hệ thống.**
-
-Đêm hôm đó, sau khi xem Liverpool nghiền nát một đội bóng nhỏ với 14 quả phạt góc, tôi tự hỏi: *"Liệu có pattern nào ở đây không? Và nếu có, liệu machine learning có thể tìm ra nó?"*
-
-Thay vì Google "how to predict corners" như một người bình thường, tôi mở Claude Code và bắt đầu một cuộc phiêu lưu kéo dài 48 giờ.
-
-Spoiler: Nó hoạt động. Nhưng không theo cách tôi nghĩ.
-
----
-
 ## Phần 1: Để Claude "nhìn" dữ liệu
 
 ### Bước đầu tiên: Hiểu mình đang có gì

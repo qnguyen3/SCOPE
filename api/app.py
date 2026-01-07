@@ -30,12 +30,13 @@ OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
 OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
 # Model configurations (threshold -> window, confidence)
+# Updated with optimized thresholds from analysis (2026-01-07)
 MODEL_CONFIGS = {
-    8.5: {'window': 5, 'confidence': 0.58, 'has_real_edge': False},
-    9.5: {'window': 5, 'confidence': 0.58, 'has_real_edge': True},
-    10.5: {'window': 10, 'confidence': 0.54, 'has_real_edge': True},
-    11.5: {'window': 10, 'confidence': 0.54, 'has_real_edge': False},
-    12.5: {'window': 10, 'confidence': 0.54, 'has_real_edge': False},
+    8.5: {'window': 5, 'confidence': 0.70},
+    9.5: {'window': 5, 'confidence': 0.60},
+    10.5: {'window': 5, 'confidence': 0.65},
+    11.5: {'window': 5, 'confidence': 0.70},
+    12.5: {'window': 5, 'confidence': 0.70},
 }
 
 # Load models at startup
@@ -151,7 +152,6 @@ def run_predictions(df, home_team, away_team):
     for threshold, config in MODEL_CONFIGS.items():
         window = config['window']
         confidence = config['confidence']
-        has_real_edge = config['has_real_edge']
 
         # Get features for this match
         features = compute_features_for_match(df, home_team, away_team, window=window)
@@ -162,7 +162,6 @@ def run_predictions(df, home_team, away_team):
                 'prob_over': 0.5,
                 'prob_under': 0.5,
                 'recommendation': 'NO BET',
-                'has_edge': False,
                 'confidence_threshold': confidence,
                 'error': 'Model not loaded'
             }
@@ -183,28 +182,22 @@ def run_predictions(df, home_team, away_team):
             # Determine recommendation
             if prob_over > confidence:
                 recommendation = 'OVER'
-                has_edge = has_real_edge
             elif prob_under > confidence:
                 recommendation = 'UNDER'
-                has_edge = has_real_edge
             else:
                 recommendation = 'NO BET'
-                has_edge = False
 
             predictions[str(threshold)] = {
                 'prob_over': round(float(prob_over), 4),
                 'prob_under': round(float(prob_under), 4),
                 'recommendation': recommendation,
-                'has_edge': has_edge,
                 'confidence_threshold': confidence,
-                'has_real_edge': has_real_edge
             }
         except Exception as e:
             predictions[str(threshold)] = {
                 'prob_over': 0.5,
                 'prob_under': 0.5,
                 'recommendation': 'NO BET',
-                'has_edge': False,
                 'confidence_threshold': confidence,
                 'error': str(e)
             }
@@ -224,12 +217,12 @@ def get_llm_assessment(home_team, away_team, predictions, statistics):
 
 ## Model Predictions (Corner O/U)
 
-| Threshold | P(Over) | P(Under) | Recommendation | Has Real Edge |
-|-----------|---------|----------|----------------|---------------|
+| Threshold | P(Over) | P(Under) | Recommendation |
+|-----------|---------|----------|----------------|
 """
     for threshold in ['8.5', '9.5', '10.5', '11.5', '12.5']:
         p = predictions.get(threshold, {})
-        prompt += f"| O/U {threshold} | {p.get('prob_over', 0):.1%} | {p.get('prob_under', 0):.1%} | {p.get('recommendation', 'N/A')} | {'Yes' if p.get('has_edge') else 'No'} |\n"
+        prompt += f"| O/U {threshold} | {p.get('prob_over', 0):.1%} | {p.get('prob_under', 0):.1%} | {p.get('recommendation', 'N/A')} |\n"
 
     # Add team statistics
     home_stats = statistics.get('home_team', {})
@@ -263,9 +256,8 @@ def get_llm_assessment(home_team, away_team, predictions, statistics):
     prompt += """
 
 ## Important Notes
-- Only O/U 9.5 and O/U 10.5 have statistically significant predictive edge
-- Other thresholds (8.5, 11.5, 12.5) mostly follow base rates
 - Standard odds are around 1.91 (-110), requiring 52.4% win rate to break even
+- Higher confidence thresholds indicate stronger model signals
 
 ---
 
@@ -281,7 +273,6 @@ You MUST follow this EXACT output format. Do not deviate from this structure.
 
 **Bet:** [OVER/UNDER] [threshold] corners
 **Confidence:** [HIGH/MEDIUM/LOW]
-**Edge:** [Yes - model shows edge / No - no statistical edge]
 
 ### 📊 MATCH ANALYSIS
 
@@ -374,7 +365,6 @@ def prepare_charts_data(df, home_team, away_team, predictions):
             'threshold': threshold,
             'prob_over': p.get('prob_over', 0.5),
             'prob_under': p.get('prob_under', 0.5),
-            'has_edge': p.get('has_edge', False)
         })
 
     return {

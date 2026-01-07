@@ -111,17 +111,16 @@
           transform: rotate(360deg);
         }
       }
-      @keyframes edge-pulse {
-        0%,
-        100% {
-          box-shadow: 0 0 0 0 rgba(244, 208, 63, 0.4);
+      @keyframes ai-pick-pulse {
+        0%, 100% {
+          box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.4);
         }
         50% {
-          box-shadow: 0 0 20px 4px rgba(244, 208, 63, 0.2);
+          box-shadow: 0 0 20px 4px rgba(46, 204, 113, 0.2);
         }
       }
-      .edge-indicator {
-        animation: edge-pulse 2s ease-in-out infinite;
+      .ai-pick-indicator {
+        animation: ai-pick-pulse 2s ease-in-out infinite;
       }
       select {
         appearance: none;
@@ -150,7 +149,17 @@
           ? "http://localhost:5001"
           : "https://scope-production.up.railway.app";
 
-      const { useState, useEffect } = React;
+      const { useState, useEffect, useMemo } = React;
+
+      // Extract chosen bet from LLM assessment
+      const extractChosenBet = (assessment) => {
+        if (!assessment) return null;
+        const match = assessment.match(/\*\*Bet:\*\*\s*(OVER|UNDER)\s*([\d.]+)/i);
+        if (match) {
+          return { direction: match[1].toUpperCase(), threshold: match[2] };
+        }
+        return null;
+      };
 
       // Header
       const Header = () => (
@@ -257,16 +266,20 @@
       );
 
       // Prediction Card
-      const PredictionCard = ({ threshold, data }) => {
+      const PredictionCard = ({ threshold, data, chosenBet }) => {
         const probOver = (data.prob_over || 0.5) * 100;
         const probUnder = (data.prob_under || 0.5) * 100;
         const rec = data.recommendation || "NO BET";
-        const isEdge = data.has_edge;
+
+        // Check if this card is the AI's chosen bet
+        const isAIPick = chosenBet &&
+          chosenBet.threshold === threshold &&
+          chosenBet.direction === rec;
 
         return (
           <div
             className={`steel-texture rounded-lg p-5 ${
-              isEdge ? "edge-indicator ring-1 ring-floodlight/50" : ""
+              isAIPick ? "ai-pick-indicator ring-2 ring-grass bg-grass/5" : ""
             }`}
           >
             <div className="flex items-center justify-between mb-4">
@@ -276,9 +289,9 @@
                   {threshold}
                 </span>
               </div>
-              {isEdge && (
-                <div className="px-2 py-1 bg-floodlight/20 rounded text-floodlight text-xs font-mono">
-                  EDGE
+              {isAIPick && (
+                <div className="px-2 py-1 bg-grass/20 rounded text-grass text-xs font-mono">
+                  AI PICK
                 </div>
               )}
             </div>
@@ -432,45 +445,90 @@
         );
       };
 
-      // LLM Assessment with Markdown
+      // LLM Assessment with Markdown (including tables)
       const LLMAssessment = ({ text }) => {
         if (!text) return null;
 
         const renderMarkdown = (md) => {
-          return md.split("\n").map((line, i) => {
+          const lines = md.split("\n");
+          const elements = [];
+          let i = 0;
+
+          while (i < lines.length) {
+            const line = lines[i];
+
+            // Check for table (lines starting and ending with |)
+            if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+              const tableLines = [];
+              while (i < lines.length && lines[i].trim().startsWith("|") && lines[i].trim().endsWith("|")) {
+                tableLines.push(lines[i]);
+                i++;
+              }
+
+              if (tableLines.length >= 2) {
+                // Parse table
+                const parseRow = (row) => {
+                  return row.split("|").slice(1, -1).map(cell => cell.trim());
+                };
+
+                const headerCells = parseRow(tableLines[0]);
+                // Skip separator row (index 1)
+                const dataRows = tableLines.slice(2).map(parseRow);
+
+                elements.push(
+                  <div key={`table-${elements.length}`} className="overflow-x-auto my-4">
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="bg-concrete/50">
+                          {headerCells.map((cell, j) => (
+                            <th key={j} className="border border-concrete/30 px-3 py-2 text-left text-grass font-semibold font-mono text-xs">
+                              {cell}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dataRows.map((row, j) => (
+                          <tr key={j} className={j % 2 === 0 ? "bg-steel/30" : ""}>
+                            {row.map((cell, k) => (
+                              <td key={k} className="border border-concrete/30 px-3 py-2 text-gray-300">
+                                {cell}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+                continue;
+              }
+            }
+
             // Headers
-            if (line.startsWith("### "))
-              return (
-                <h4
-                  key={i}
-                  className="font-display text-lg text-white mt-4 mb-2"
-                >
+            if (line.startsWith("### ")) {
+              elements.push(
+                <h4 key={i} className="font-display text-lg text-white mt-4 mb-2">
                   {line.slice(4)}
                 </h4>
               );
-            if (line.startsWith("## "))
-              return (
-                <h3
-                  key={i}
-                  className="font-display text-xl text-grass mt-5 mb-2"
-                >
+            } else if (line.startsWith("## ")) {
+              elements.push(
+                <h3 key={i} className="font-display text-xl text-grass mt-5 mb-2">
                   {line.slice(3)}
                 </h3>
               );
-            if (line.startsWith("# "))
-              return (
-                <h2
-                  key={i}
-                  className="font-display text-2xl text-grass mt-6 mb-3"
-                >
+            } else if (line.startsWith("# ")) {
+              elements.push(
+                <h2 key={i} className="font-display text-2xl text-grass mt-6 mb-3">
                   {line.slice(2)}
                 </h2>
               );
-
+            }
             // Bold text (inline)
-            if (line.includes("**")) {
+            else if (line.includes("**")) {
               const parts = line.split(/\*\*(.*?)\*\*/g);
-              return (
+              elements.push(
                 <p key={i} className="text-gray-300 my-1">
                   {parts.map((part, j) =>
                     j % 2 === 1 ? (
@@ -484,43 +542,53 @@
                 </p>
               );
             }
-
             // Bullet points
-            if (line.startsWith("- "))
-              return (
+            else if (line.startsWith("- ")) {
+              elements.push(
                 <li key={i} className="text-gray-300 ml-4 my-1">
                   {line.slice(2)}
                 </li>
               );
-            if (line.startsWith("* "))
-              return (
+            } else if (line.startsWith("* ")) {
+              elements.push(
                 <li key={i} className="text-gray-300 ml-4 my-1">
                   {line.slice(2)}
                 </li>
               );
-
+            }
             // Numbered lists
-            if (/^\d+\.\s/.test(line))
-              return (
+            else if (/^\d+\.\s/.test(line)) {
+              elements.push(
                 <li key={i} className="text-gray-300 ml-4 my-1 list-decimal">
                   {line.replace(/^\d+\.\s/, "")}
                 </li>
               );
-
+            }
             // Empty line
-            if (line.trim() === "") return <div key={i} className="h-2"></div>;
-
+            else if (line.trim() === "") {
+              elements.push(<div key={i} className="h-2"></div>);
+            }
+            // Horizontal rule
+            else if (line.trim() === "---") {
+              elements.push(<hr key={i} className="border-concrete/30 my-4" />);
+            }
             // Regular paragraph
-            return (
-              <p key={i} className="text-gray-300 my-1">
-                {line}
-              </p>
-            );
-          });
+            else {
+              elements.push(
+                <p key={i} className="text-gray-300 my-1">
+                  {line}
+                </p>
+              );
+            }
+
+            i++;
+          }
+
+          return elements;
         };
 
         return (
-          <div className="steel-texture rounded-lg p-6">
+          <div className="steel-texture rounded-lg p-6 h-fit">
             <h3 className="font-display text-2xl text-white mb-4">
               AI <span className="text-grass">ANALYSIS</span>
             </h3>
@@ -540,6 +608,11 @@
         const [teamsLoading, setTeamsLoading] = useState(true);
         const [error, setError] = useState(null);
         const [result, setResult] = useState(null);
+
+        // Extract chosen bet from LLM assessment
+        const chosenBet = useMemo(() => {
+          return extractChosenBet(result?.llm_assessment);
+        }, [result?.llm_assessment]);
 
         useEffect(() => {
           fetch(`${API_BASE}/api/teams`)
@@ -610,36 +683,47 @@
                   </h2>
                 </div>
 
+                {/* Prediction Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   {["8.5", "9.5", "10.5", "11.5", "12.5"].map((t) => (
                     <PredictionCard
                       key={t}
                       threshold={t}
                       data={result.predictions?.[t] || {}}
+                      chosenBet={chosenBet}
                     />
                   ))}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <TeamStatsCard
-                    team={result.match.home_team}
-                    stats={result.statistics?.home_team}
-                    venue="HOME"
-                  />
-                  <TeamStatsCard
-                    team={result.match.away_team}
-                    stats={result.statistics?.away_team}
-                    venue="AWAY"
-                  />
+                {/* 60/40 Split Layout */}
+                <div className="flex flex-col lg:flex-row gap-6">
+                  {/* Left Column - Stats (60%) */}
+                  <div className="w-full lg:w-3/5 space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <TeamStatsCard
+                        team={result.match.home_team}
+                        stats={result.statistics?.home_team}
+                        venue="HOME"
+                      />
+                      <TeamStatsCard
+                        team={result.match.away_team}
+                        stats={result.statistics?.away_team}
+                        venue="AWAY"
+                      />
+                    </div>
+
+                    <H2HCard
+                      data={result.statistics?.head_to_head}
+                      homeTeam={result.match.home_team}
+                      awayTeam={result.match.away_team}
+                    />
+                  </div>
+
+                  {/* Right Column - AI Analysis (40%) */}
+                  <div className="w-full lg:w-2/5 lg:sticky lg:top-6 lg:self-start">
+                    <LLMAssessment text={result.llm_assessment} />
+                  </div>
                 </div>
-
-                <H2HCard
-                  data={result.statistics?.head_to_head}
-                  homeTeam={result.match.home_team}
-                  awayTeam={result.match.away_team}
-                />
-
-                <LLMAssessment text={result.llm_assessment} />
               </div>
             )}
 
